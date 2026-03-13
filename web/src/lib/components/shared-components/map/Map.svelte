@@ -18,7 +18,7 @@
   import MapSettingsModal from '$lib/modals/MapSettingsModal.svelte';
   import { mapSettings } from '$lib/stores/preferences.store';
   import { getAssetMediaUrl, handlePromiseError } from '$lib/utils';
-  import { getMapMarkers, type MapMarkerResponseDto } from '@immich/sdk';
+  import { getMapMarkers, getSpaceMapMarkers, type MapMarkerResponseDto } from '@immich/sdk';
   import { Alert, Container, Icon, modalManager, Text, Theme, themeManager } from '@immich/ui';
   import { mdiCog, mdiImageMultiple, mdiMap, mdiMapMarker } from '@mdi/js';
   import type { Feature, GeoJsonProperties, Geometry, Point } from 'geojson';
@@ -71,6 +71,7 @@
     rounded?: boolean;
     showSimpleControls?: boolean;
     autoFitBounds?: boolean;
+    spaceId?: string;
   }
 
   let {
@@ -93,6 +94,7 @@
     rounded = false,
     showSimpleControls = true,
     autoFitBounds = true,
+    spaceId,
   }: Props = $props();
 
   // Calculate initial bounds from markers once during initialization
@@ -236,6 +238,10 @@
       abortController.abort();
     }
     abortController = new AbortController();
+
+    if (spaceId) {
+      return await getSpaceMapMarkers({ id: spaceId }, { signal: abortController.signal });
+    }
 
     const { includeArchived, onlyFavorites, withPartners, withSharedAlbums } = $mapSettings;
     const { fileCreatedAfter, fileCreatedBefore } = getFileCreatedDates();
