@@ -76,7 +76,6 @@
 			dstPath = "";
 			dstSubfolderSpec = 13;
 			files = (
-				F0B57D492DF764BE00DC5BCC /* WidgetExtension.appex in Embed Foundation Extensions */,
 				FAC6F89B2D287C890078CB2F /* ShareExtension.appex in Embed Foundation Extensions */,
 			);
 			name = "Embed Foundation Extensions";
@@ -383,7 +382,6 @@
 			);
 			dependencies = (
 				FAC6F8992D287C890078CB2F /* PBXTargetDependency */,
-				F0B57D482DF764BE00DC5BCC /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				B231F52D2E93A44A00BC45D1 /* Core */,
