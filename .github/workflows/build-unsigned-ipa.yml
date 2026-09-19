@@ -103,8 +103,16 @@ jobs:
 
       # Dart API client is generated from the OpenAPI spec and is gitignored,
       # so codegen must run before the first build.
+      # NOTE: on this branch `mise //mobile:codegen` is only an alias for
+      # `codegen:dart` (build_runner). Run every generator explicitly so
+      # translations, pigeon, drift and the OpenAPI client are all produced.
       - name: Perform codegen
-        run: mise //mobile:codegen
+        run: |
+          mise //:open-api-dart
+          mise //mobile:codegen:dart
+          mise //mobile:codegen:pigeon
+          mise //mobile:codegen:translation
+          mise //mobile:drift:migration || true
 
       - name: Install CocoaPods dependencies
         working-directory: ./mobile/ios
