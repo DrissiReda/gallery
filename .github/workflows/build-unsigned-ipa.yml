@@ -110,9 +110,21 @@ jobs:
         working-directory: ./mobile/ios
         run: pod install
 
+      # The Runner target reads MARKETING_VERSION/CURRENT_PROJECT_VERSION from
+      # FLUTTER_BUILD_NAME/FLUTTER_BUILD_NUMBER (written into Generated.xcconfig
+      # from mobile/pubspec.yaml, which the branding step stamps with `version`).
+      # Passing them explicitly as well keeps the build correct even if that
+      # chain ever changes upstream.
       - name: Build unsigned archive
         working-directory: ./mobile
-        run: flutter build ipa --no-codesign --${{ inputs.build_mode }}
+        run: |
+          args=(--no-codesign "--${{ inputs.build_mode }}")
+          v="${{ inputs.version }}"
+          if [ -n "$v" ]; then
+            args+=(--build-name "${v#v}")
+            args+=(--build-number "$(grep -E '^version:' pubspec.yaml | sed -E 's/.*\+//')")
+          fi
+          flutter build ipa "${args[@]}"
 
       # `--no-codesign` stops after the .xcarchive: Flutter skips IPA creation
       # because its export step wants a provisioning profile. An IPA is just a
