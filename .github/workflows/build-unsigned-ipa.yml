@@ -124,7 +124,12 @@ jobs:
             args+=(--build-name "${v#v}")
             args+=(--build-number "$(grep -E '^version:' pubspec.yaml | sed -E 's/.*\+//')")
           fi
+          echo "--- pre-build version chain ---"
+          grep -E '^version:' pubspec.yaml
+          grep -rE 'MARKETING_VERSION|CURRENT_PROJECT_VERSION' ios/Runner.xcodeproj/project.pbxproj | grep -v '1\.0;\|Widget\|ShareExtension' | head -8
           flutter build ipa "${args[@]}"
+          echo "--- post-build Generated.xcconfig ---"
+          grep -E 'FLUTTER_BUILD_NAME|FLUTTER_BUILD_NUMBER' ios/Flutter/Generated.xcconfig || true
 
       # `--no-codesign` stops after the .xcarchive: Flutter skips IPA creation
       # because its export step wants a provisioning profile. An IPA is just a
