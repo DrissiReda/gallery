@@ -1,0 +1,128 @@
+name: Build Unsigned iOS IPA
+
+# Produces an UNSIGNED .ipa for sideloading with TrollStore.
+#
+# No Apple certificates, provisioning profiles, or repository secrets are
+# required: `flutter build ipa --no-codesign` emits the IPA with the app only
+# ad-hoc signed. TrollStore re-signs with its fake root certificate on install
+# and preserves any entitlements already present in the binary.
+#
+# Mirrors the toolchain setup of .github/workflows/gallery-build-mobile.yml
+# (mise for the pinned Flutter/Java/Node versions, CocoaPods for plugins) but
+# stops short of any signing or store upload.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref to build (branch/tag/SHA). Empty = this workflow ref.'
+        required: false
+        type: string
+        default: ''
+      build_mode:
+        description: 'Flutter build mode'
+        required: true
+        type: choice
+        options:
+          - release
+          - profile
+        default: release
+
+concurrency:
+  group: unsigned-ios-ipa-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-ipa:
+    name: Build unsigned IPA
+    runs-on: macos-15
+    timeout-minutes: 120
+
+    steps:
+      - name: Select Xcode 26
+        run: |
+          newest="$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)"
+          if [ -n "$newest" ]; then
+            sudo xcode-select -s "$newest/Contents/Developer"
+          fi
+          xcodebuild -version
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: '17'
+
+      # Mise installs the exact pinned versions (Flutter, pnpm, node,
+      # openapi-generator) that the repo's mise.toml / mise.lock declare.
+      - name: Setup Mise
+        uses: immich-app/devtools/actions/use-mise@3bca63ca3c15020293b36b51737a3ee2c773340b
+        with:
+          github_token: ${{ github.token }}
+          working_directory: ./mobile
+
+      # Flutter's SwiftPM integration pins the generated plugin package to the
+      # framework's default iOS floor; CocoaPods honours the Podfile's
+      # `platform :ios, '15.0'`. Keep CocoaPods to match the project.
+      - name: Use CocoaPods for Flutter plugins
+        run: flutter config --no-enable-swift-package-manager
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+          working-directory: ./mobile/ios
+
+      - name: Install dependencies
+        run: mise //mobile:install:ci
+
+      # Dart API client is generated from the OpenAPI spec and is gitignored,
+      # so codegen must run before the first build.
+      - name: Perform codegen
+        run: mise //mobile:codegen
+
+      - name: Install CocoaPods dependencies
+        working-directory: ./mobile/ios
+        run: pod install
+
+      - name: Build unsigned IPA
+        working-directory: ./mobile
+        run: flutter build ipa --no-codesign --${{ inputs.build_mode }}
+
+      - name: Locate and inspect the IPA
+        run: |
+          set -eux
+          ipa="$(find mobile/build/ios -maxdepth 3 -name '*.ipa' | head -1)"
+          if [ -z "$ipa" ]; then
+            echo "::error::No .ipa produced"
+            find mobile/build/ios -maxdepth 4 -type d | head -80
+            exit 1
+          fi
+          echo "IPA: $ipa"
+          cp "$ipa" unsigned-gallery.ipa
+          ls -lh unsigned-gallery.ipa
+          echo "--- bundle identifier / min OS ---"
+          unzip -p unsigned-gallery.ipa 'Payload/*.app/Info.plist' > /tmp/Info.plist || true
+          plutil -p /tmp/Info.plist 2>/dev/null | grep -iE 'CFBundleIdentifier|MinimumOSVersion|CFBundleShortVersionString' || true
+          echo "--- archive listing (first 25) ---"
+          unzip -l unsigned-gallery.ipa | head -25
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-ios-ipa
+          path: unsigned-gallery.ipa
+          if-no-files-found: error
+          retention-days: 30
