@@ -1144,9 +1144,9 @@ packages:
     dependency: "direct main"
     description:
       path: "."
-      ref: cdf621bdb7edaf996e118a58a48f6441187d79c6
-      resolved-ref: cdf621bdb7edaf996e118a58a48f6441187d79c6
-      url: "https://github.com/immich-app/native_video_player"
+      ref: av1-sw-decode
+      resolved-ref: d5cebec9558728e26e5e9f944525c833954576f6
+      url: "https://github.com/DrissiReda/native_video_player"
     source: git
     version: "1.3.1"
   network_info_plus:
