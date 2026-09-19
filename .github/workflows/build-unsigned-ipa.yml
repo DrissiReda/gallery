@@ -19,6 +19,11 @@ on:
         required: false
         type: string
         default: ''
+      version:
+        description: 'Fork version to stamp (e.g. v5.6.0). The app compares this against the server; a wrong value triggers "mobile app version is not compatible with the server". Empty = derive from the newest v* git tag.'
+        required: false
+        type: string
+        default: ''
       build_mode:
         description: 'Flutter build mode'
         required: true
@@ -57,6 +62,14 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
           fetch-tags: true
+
+      # Applies the Noodle branding and stamps the fork version into the
+      # packages' version fields. Without this the mobile app keeps Flutter's
+      # placeholder version and the server rejects it as incompatible.
+      - name: Apply branding and stamp version
+        uses: ./.github/actions/apply-branding
+        with:
+          version: ${{ inputs.version }}
 
       - name: Setup Java
         uses: actions/setup-java@v4
