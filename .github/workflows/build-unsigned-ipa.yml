@@ -97,27 +97,39 @@ jobs:
         working-directory: ./mobile/ios
         run: pod install
 
-      - name: Build unsigned IPA
+      - name: Build unsigned archive
         working-directory: ./mobile
         run: flutter build ipa --no-codesign --${{ inputs.build_mode }}
 
-      - name: Locate and inspect the IPA
+      # `--no-codesign` stops after the .xcarchive: Flutter skips IPA creation
+      # because its export step wants a provisioning profile. An IPA is just a
+      # zip with Payload/<App>.app at the root, so build it by hand. TrollStore
+      # re-signs the binary on install, so no signature is needed here.
+      - name: Package IPA from the archive
         run: |
           set -eux
-          ipa="$(find mobile/build/ios -maxdepth 3 -name '*.ipa' | head -1)"
-          if [ -z "$ipa" ]; then
-            echo "::error::No .ipa produced"
-            find mobile/build/ios -maxdepth 4 -type d | head -80
-            exit 1
-          fi
-          echo "IPA: $ipa"
-          cp "$ipa" unsigned-gallery.ipa
+          archive="$(find mobile/build/ios/archive -maxdepth 1 -name '*.xcarchive' | head -1)"
+          [ -n "$archive" ] || { echo "::error::no .xcarchive found"; exit 1; }
+          echo "Archive: $archive"
+
+          app="$(find "$archive/Products/Applications" -maxdepth 1 -name '*.app' | head -1)"
+          [ -n "$app" ] || { echo "::error::no .app in archive"; exit 1; }
+          echo "App: $app"
+
+          rm -rf /tmp/ipa && mkdir -p /tmp/ipa/Payload
+          cp -R "$app" /tmp/ipa/Payload/
+
+          # Report identity + min OS so the log is self-documenting.
+          binary="$app/$(basename "$app" .app)"
+          plist="/tmp/ipa/Payload/$(basename "$app")/Info.plist"
+          echo "--- Info.plist ---"
+          plutil -p "$plist" | grep -iE 'CFBundleIdentifier|MinimumOSVersion|CFBundleShortVersionString|CFBundleDisplayName|CFBundleName' || true
+          echo "--- Mach-O header ---"
+          otool -hv "$binary" | tail -2 || true
+
+          (cd /tmp/ipa && zip -qry /tmp/gallery-unsigned.ipa Payload)
+          cp /tmp/gallery-unsigned.ipa unsigned-gallery.ipa
           ls -lh unsigned-gallery.ipa
-          echo "--- bundle identifier / min OS ---"
-          unzip -p unsigned-gallery.ipa 'Payload/*.app/Info.plist' > /tmp/Info.plist || true
-          plutil -p /tmp/Info.plist 2>/dev/null | grep -iE 'CFBundleIdentifier|MinimumOSVersion|CFBundleShortVersionString' || true
-          echo "--- archive listing (first 25) ---"
-          unzip -l unsigned-gallery.ipa | head -25
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4

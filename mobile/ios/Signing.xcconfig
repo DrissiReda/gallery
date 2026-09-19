@@ -27,3 +27,15 @@ IMMICH_GROUP_ID = group.app.immich.share
 
 // Optional per-developer configuration override
 #include? "Signing.local.xcconfig"
+
+// ---------------------------------------------------------------------------
+// Fork build overrides (Redval)
+//
+// This fork builds an unsigned IPA for TrollStore sideloading. A distinct
+// bundle ID lets it coexist with the official Gallery/Immich app on the same
+// device. The App Group must differ too, otherwise installs would share the
+// container and one app would clobber the other's data.
+// ---------------------------------------------------------------------------
+IMMICH_BUNDLE_ID_PROD = ovh.redval.gallerycustom
+IMMICH_BUNDLE_ID_DEV = ovh.redval.gallerycustom.dev
+IMMICH_GROUP_ID = group.ovh.redval.gallerycustom
