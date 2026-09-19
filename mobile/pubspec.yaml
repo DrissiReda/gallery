@@ -47,8 +47,8 @@ dependencies:
   maplibre_gl: ^0.26.0
   native_video_player:
     git:
-      url: https://github.com/immich-app/native_video_player
-      ref: 'cdf621bdb7edaf996e118a58a48f6441187d79c6'
+      url: https://github.com/DrissiReda/native_video_player
+      ref: 'av1-sw-decode'
   network_info_plus: ^6.1.4
   octo_image: ^2.1.0
   openapi:
