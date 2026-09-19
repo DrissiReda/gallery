@@ -110,6 +110,15 @@ jobs:
         working-directory: ./mobile/ios
         run: pod install
 
+      - name: Dump resolved build settings
+        working-directory: ./mobile/ios
+        run: |
+          xcodebuild -project Runner.xcodeproj -scheme Runner \
+            -configuration Release -sdk iphoneos \
+            -showBuildSettings 2>/dev/null \
+            | grep -E 'MARKETING_VERSION|CURRENT_PROJECT_VERSION|FLUTTER_BUILD_NAME|FLUTTER_BUILD_NUMBER|PRODUCT_BUNDLE_IDENTIFIER|INFOPLIST_FILE' \
+            | sort -u
+
       # The Runner target reads MARKETING_VERSION/CURRENT_PROJECT_VERSION from
       # FLUTTER_BUILD_NAME/FLUTTER_BUILD_NUMBER (written into Generated.xcconfig
       # from mobile/pubspec.yaml, which the branding step stamps with `version`).
