@@ -303,6 +303,7 @@ class SplashScreenPageState extends ConsumerState<SplashScreenPage> {
     final endpoint = Store.tryGet(StoreKey.serverEndpoint);
     final accessToken = Store.tryGet(StoreKey.accessToken);
 
+    log.info('Resume gate: token=${accessToken != null} url=${serverUrl != null} endpoint=${endpoint != null}');
     if (accessToken != null && serverUrl != null && endpoint != null) {
       final infoProvider = ref.read(serverInfoProvider.notifier);
       final wsProvider = ref.read(websocketProvider.notifier);
@@ -313,6 +314,7 @@ class SplashScreenPageState extends ConsumerState<SplashScreenPage> {
       unawaited(
         ref.read(authProvider.notifier).saveAuthInfo(accessToken: accessToken).then(
           (_) async {
+            log.info('saveAuthInfo ok, establishing connection');
             try {
               wsProvider.connect();
               unawaited(infoProvider.getServerInfo());
