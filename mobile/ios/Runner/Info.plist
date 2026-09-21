@@ -187,6 +187,8 @@
 	<!-- AV1 debug log (Documents/av1debug.log) visible in Files app -->
 	<key>UIFileSharingEnabled</key>
 	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
