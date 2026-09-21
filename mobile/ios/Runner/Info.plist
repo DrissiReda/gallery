@@ -184,6 +184,9 @@
 	<string>Main</string>
 	<key>UIStatusBarHidden</key>
 	<false/>
+	<!-- AV1 debug log (Documents/av1debug.log) visible in Files app -->
+	<key>UIFileSharingEnabled</key>
+	<true/>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
