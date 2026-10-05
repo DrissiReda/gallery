@@ -276,7 +276,7 @@ class _NativeVideoViewerState extends ConsumerState<NativeVideoViewer> with Widg
       final bytes = file.readAsBytesSync();
       // Keep the tail: the file can be a couple of MB.
       final tail = bytes.length > 8000 ? bytes.sublist(bytes.length - 8000) : bytes;
-      final lines = const Utf8Decoder(allowMalformed: true).convert(tail).trim().split('\n');
+      final lines = utf8.decode(tail, allowMalformed: true).trim().split('\n');
       final last = lines.length > 24 ? lines.sublist(lines.length - 24) : lines;
       setState(() => _av1Log = last);
     }).catchError((_) => <String>[]);
