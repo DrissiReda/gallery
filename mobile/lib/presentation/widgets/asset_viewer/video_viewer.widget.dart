@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -17,6 +18,7 @@ import 'package:immich_mobile/providers/infrastructure/settings.provider.dart';
 import 'package:immich_mobile/services/api.service.dart';
 import 'package:logging/logging.dart';
 import 'package:native_video_player/native_video_player.dart';
+import 'package:path_provider/path_provider.dart';
 
 class NativeVideoViewer extends ConsumerStatefulWidget {
   final BaseAsset asset;
@@ -52,6 +54,11 @@ class _NativeVideoViewerState extends ConsumerState<NativeVideoViewer> with Widg
   late final Future<VideoSource?> _videoSource;
   Timer? _loadTimer;
   bool _isVideoReady = false;
+  // ADDITIVE (debug): tail of the native AV1 debug log, shown on screen.
+  // The phone has no Mac/USB, so pulling Documents/av1debug.log out through
+  // the Files app is the only other way to see what the decoder did.
+  List<String> _av1Log = const [];
+  StreamSubscription<void>? _av1LogSub;
   bool _shouldPlayOnForeground = true;
 
   VideoPlayerNotifier get _notifier => ref.read(videoPlayerProvider(widget.asset.heroTag).notifier);
@@ -85,6 +92,7 @@ class _NativeVideoViewerState extends ConsumerState<NativeVideoViewer> with Widg
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _loadTimer?.cancel();
+    _av1LogSub?.cancel();
     _removeListeners();
     super.dispose();
   }
@@ -220,6 +228,11 @@ class _NativeVideoViewerState extends ConsumerState<NativeVideoViewer> with Widg
     }
 
     setState(() => _isVideoReady = true);
+    _refreshAv1Log();
+    // Keep it live while the video plays: the interesting lines (decode
+    // failures, position ticks) appear after playback starts.
+    const tick = Stream<void>.periodic(Duration(seconds: 3));
+    _av1LogSub ??= tick.listen((_) => _refreshAv1Log());
 
     if (ref.read(assetViewerProvider).showingDetails) {
       return;
@@ -248,6 +261,25 @@ class _NativeVideoViewerState extends ConsumerState<NativeVideoViewer> with Widg
       return;
     }
     _notifier.onNativePositionChanged();
+  }
+
+  /// ADDITIVE (debug): refresh the on-screen native log tail.
+  void _refreshAv1Log() {
+    if (!mounted) {
+      return;
+    }
+    getApplicationDocumentsDirectory().then((dir) {
+      final file = File('${dir.path}/av1debug.log');
+      if (!file.existsSync()) {
+        return;
+      }
+      final bytes = file.readAsBytesSync();
+      // Keep the tail: the file can be a couple of MB.
+      final tail = bytes.length > 8000 ? bytes.sublist(bytes.length - 8000) : bytes;
+      final lines = const Utf8Decoder(allowMalformed: true).convert(tail).trim().split('\n');
+      final last = lines.length > 24 ? lines.sublist(lines.length - 24) : lines;
+      setState(() => _av1Log = last);
+    }).catchError((_) => <String>[]);
   }
 
   void _onPlaybackBuffering() {
@@ -344,6 +376,25 @@ class _NativeVideoViewerState extends ConsumerState<NativeVideoViewer> with Widg
             // ADDITIVE: temporary on-screen readout. Position ticks are the
             // app's only signal for both the seek bar and buffering, so make
             // them visible instead of guessing from the outside.
+            if (_isVideoReady && _av1Log.isNotEmpty)
+              Positioned(
+                left: 0,
+                right: 0,
+                top: 0,
+                child: IgnorePointer(
+                  child: Container(
+                    height: 130,
+                    color: Colors.black87,
+                    padding: const EdgeInsets.all(4),
+                    child: SingleChildScrollView(
+                      child: Text(
+                        _av1Log.join('\n'),
+                        style: const TextStyle(fontSize: 7, color: Colors.greenAccent, height: 1.1),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
             if (_isVideoReady)
               Positioned(
                 left: 8,
