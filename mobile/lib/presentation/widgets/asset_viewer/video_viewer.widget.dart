@@ -250,6 +250,13 @@ class _NativeVideoViewerState extends ConsumerState<NativeVideoViewer> with Widg
     _notifier.onNativePositionChanged();
   }
 
+  void _onPlaybackBuffering() {
+    _notifier.onNativeBufferingChanged(_controller?.onPlaybackBuffering.value ?? false);
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
   void _onPlaybackStatusChanged() {
     if (!mounted) {
       return;
@@ -295,6 +302,7 @@ class _NativeVideoViewerState extends ConsumerState<NativeVideoViewer> with Widg
     nc.onPlaybackStatusChanged.addListener(_onPlaybackStatusChanged);
     nc.onPlaybackReady.addListener(_onPlaybackReady);
     nc.onPlaybackEnded.addListener(_onPlaybackEnded);
+    nc.onPlaybackBuffering.addListener(_onPlaybackBuffering);
 
     _controller = nc;
 
@@ -306,7 +314,16 @@ class _NativeVideoViewerState extends ConsumerState<NativeVideoViewer> with Widg
   @override
   Widget build(BuildContext context) {
     final isCasting = ref.watch(castProvider.select((c) => c.isCasting));
-    final status = ref.watch(videoPlayerProvider(widget.asset.heroTag).select((v) => v.status));
+    final playback = ref.watch(videoPlayerProvider(widget.asset.heroTag));
+    final status = playback.status;
+    final _position = playback.position;
+    final _duration = playback.duration;
+    final notifier = ref.read(videoPlayerProvider(widget.asset.heroTag).notifier);
+    final _nativeBuffering = notifier.nativeBuffering;
+    final _tickCount = notifier.tickCount;
+    final _lastTickMs = notifier.lastTickMs;
+    final _msSinceLastTick = notifier.msSinceLastTick;
+    final _error = _controller?.onError.value;
 
     return IgnorePointer(
       child: Stack(
@@ -319,11 +336,32 @@ class _NativeVideoViewerState extends ConsumerState<NativeVideoViewer> with Widg
             ),
             Center(
               child: AnimatedOpacity(
-                opacity: status == VideoPlaybackStatus.buffering ? 1.0 : 0.0,
+                opacity: status == VideoPlaybackStatus.buffering || _nativeBuffering ? 1.0 : 0.0,
                 duration: const Duration(milliseconds: 400),
                 child: const CircularProgressIndicator(),
               ),
             ),
+            // ADDITIVE: temporary on-screen readout. Position ticks are the
+            // app's only signal for both the seek bar and buffering, so make
+            // them visible instead of guessing from the outside.
+            if (_isVideoReady)
+              Positioned(
+                left: 8,
+                bottom: 8,
+                child: IgnorePointer(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                    color: Colors.black54,
+                    child: Text(
+                      'pos=${_position.inMilliseconds}ms ticks=$_tickCount '
+                      'last=${_lastTickMs}ms age=${_msSinceLastTick}ms '
+                      'buf=$_nativeBuffering st=$status dur=${_duration.inMilliseconds}ms '
+                      'err=${_error ?? '-'}',
+                      style: const TextStyle(fontSize: 9, color: Colors.white),
+                    ),
+                  ),
+                ),
+              ),
           ],
         ],
       ),
