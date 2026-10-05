@@ -231,7 +231,7 @@ class _NativeVideoViewerState extends ConsumerState<NativeVideoViewer> with Widg
     _refreshAv1Log();
     // Keep it live while the video plays: the interesting lines (decode
     // failures, position ticks) appear after playback starts.
-    const tick = Stream<void>.periodic(Duration(seconds: 3));
+    final tick = Stream<void>.periodic(const Duration(seconds: 3));
     _av1LogSub ??= tick.listen((_) => _refreshAv1Log());
 
     if (ref.read(assetViewerProvider).showingDetails) {
