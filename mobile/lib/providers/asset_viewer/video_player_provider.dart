@@ -217,7 +217,7 @@ class VideoPlayerNotifier extends StateNotifier<VideoPlayerState> {
 
   void onNativePositionChanged() {
     _tickCount++;
-    _lastTickMs = _controller?.playbackInfo.position ?? -1;
+    _lastTickMs = _controller?.playbackInfo?.position ?? -1;
     _lastTickAt = DateTime.now();
     if (!mounted || (_seekTimer?.isActive ?? false)) {
       return;
@@ -256,7 +256,7 @@ class VideoPlayerNotifier extends StateNotifier<VideoPlayerState> {
       }
     } else if (state.status == VideoPlaybackStatus.buffering) {
       state = state.copyWith(
-        status: _controller?.playbackInfo.status == PlaybackStatus.playing
+        status: _controller?.playbackInfo?.status == PlaybackStatus.playing
             ? VideoPlaybackStatus.playing
             : VideoPlaybackStatus.paused,
       );
