@@ -286,3 +286,85 @@ doc that has gone stale loses nothing. A stale doc that stays costs every future
 - User-facing docs live in `docs/docs/` and are deployed to `docs.opennoodle.de`. Run prettier on any markdown under `docs/` before committing — CI Docs Build is strict. `specs/` is outside `docs/` precisely so it is *not* prettier-gated and does not trigger the Docs Build workflow.
 - Guides for switching to / from Gallery live under `docs/docs/guides/` — the switch-back-to-immich script is at `scripts/revert-to-immich/`.
 - The README's "What's Different from Upstream Immich" section must stay in feature parity with the marketing site (source of truth: `apps/marketing/src/data/features.ts` + `apps/marketing/src/pages/features/*.astro` in the `platform` repo) and mirror the grouping of the `noodle-gallery-vs-immich` comparison post. When a feature launches there (see the `launch-new-feature` skill), update this README too. Each feature links to `https://opennoodle.de/features/<marketing-slug>` and, where one exists, `https://docs.opennoodle.de/features/<docs-slug>` — note docs slugs can differ from marketing slugs (e.g. `dynamic-filters`→`dynamic-filter-suggestions`, `image-editing`/`video-trimming`→`editing`, `connected-libraries`→`libraries`, memories→`memories`, mobile apps→`mobile-app`).
+
+## iOS: AV1 software decoder + unsigned IPA (personal fork ops)
+
+Not upstream. Only relevant for the `ovh.redval.gallery` iOS sideload build.
+
+**Layout**
+
+| What | Where |
+|------|-------|
+| App fork | this repo, branch `release/v5.6.0-ipa` (`release/v5.6.0-stockplayer` = stock player, `ci/unsigned-ipa` = workflow default) |
+| AV1 SW decoder plugin | `DrissiReda/native_video_player` branch `av1-sw-decode` — pinned by ref in `mobile/pubspec.yaml` |
+| Local clones | `~/apps/custom/gallery`, `~/apps/forks/native_video_player` |
+| Build workflow | `.github/workflows/build-unsigned-ipa.yml` (macOS runner, unsigned, TrollStore) |
+| Delivered IPAs | `/data/filebrowser/files/admin/NoodleGallery-unsigned<N>.ipa` (N = next free integer) |
+
+**Why the SW decoder exists:** the server serves raw AV1 (`acceptedVideoCodecs=av1`) and iOS
+AVPlayer has no software AV1 path (HW only on A17 Pro+). Below that, the plugin decodes via
+avformat → dav1d → sws NV12 → `AVSampleBufferDisplayLayer`, gated on
+`VTIsHardwareDecodeSupported(kCMVideoCodecType_AV1)`; HW-capable devices still use AVPlayer.
+
+**Build** — no Mac locally (AMD EPYC host), so CI is the only path:
+
+```bash
+# --ref is REQUIRED: gh workflow run resolves the workflow file from the
+# DEFAULT branch, and main's copy only runs `mise //mobile:codegen` (which is
+# just build_runner). The branch copy runs open-api-dart + dart + pigeon +
+# translation + drift. Without --ref the build dies in "Build unsigned archive"
+# with "Error when reading 'lib/generated/translations.g.dart'".
+gh workflow run build-unsigned-ipa.yml -R DrissiReda/gallery \
+  --ref release/v5.6.0-ipa \
+  -f ref=release/v5.6.0-ipa -f version=v5.6.0 -f build_mode=release
+gh run watch -R DrissiReda/gallery   # pick the newest run
+gh run download -R DrissiReda/gallery -n unsigned-ios-ipa -D /tmp/ipa-dl
+```
+
+`version` must equal the **server** version. App built from a newer branch than the server
+crashes at SSO: the DTO carries fields (e.g. `clusterGroupId`) the older server omits →
+`fromJson` null. Build app and server from the same release.
+
+**Publish to filebrowser** (served share `admin`, next free N):
+
+```bash
+# Use find, not a glob: zsh aborts a command substitution on "no matches
+# found", which silently yields n=1 and OVERWRITES unsigned1.ipa.
+n=$(find /data/filebrowser/files/admin -maxdepth 1 -name 'NoodleGallery-unsigned*.ipa' \
+      -printf '%f\n' 2>/dev/null | sed -E 's/[^0-9]//g' | sort -n | tail -1)
+n=$(( ${n:-0} + 1 ))
+install -m 0666 /tmp/ipa-dl/unsigned-gallery.ipa \
+  "/data/filebrowser/files/admin/NoodleGallery-unsigned${n}.ipa"
+```
+
+**Gotchas that cost real time**
+
+- The workflow already handles the traps; do not re-add them locally: `mise //mobile:codegen`
+  is only an alias for `codegen:dart` here, so `open-api-dart`, `pigeon`, `translation`,
+  `drift` must each run explicitly or `translations.g.dart` is missing.
+- `--no-codesign` stops after the `.xcarchive` (Flutter skips IPA packaging, no provisioning
+  profile). The workflow zips `Payload/<App>.app` by hand. TrollStore re-signs on install.
+- v5.6.0 `pubspec.lock` is CRLF + old format — edit surgically, preserve line endings.
+- Static FFmpeg/dav1d XCFrameworks **must** be `.framework` bundles; CocoaPods emits
+  `-lLibavcodec` for bare `.a`, which `ld` cannot resolve. Headers nest as
+  `Headers/<libname>/*.h`.
+- Native AV1 network code must use `defaultSessionConfiguration` (shares
+  `HTTPCookieStorage` with the `cupertino_http` login). `ephemeral` → empty cookie jar →
+  401 on media URLs → probe fails → silent fallback to AVPlayer → infinite loading.
+  The plugin's `VideoProxyServer.session` is never set by the app; do not use it for auth.
+- FFmpeg 7 dropped `avformat_seek_frame` (use `avformat_seek_file`).
+
+**`pubspec.lock` pins the plugin — a new plugin commit is NOT built until you bump it.**
+`mobile/pubspec.lock` carries `resolved-ref` for the git dependency and `pub` honours
+the lock, so pushing to `av1-sw-decode` changes nothing in CI. Bump it every time:
+
+```bash
+NEW=$(git ls-remote git@github.com:DrissiReda/native_video_player.git refs/heads/av1-sw-decode | cut -f1)
+# mobile/pubspec.lock: native_video_player.description.resolved-ref -> $NEW
+```
+
+Symptom when forgotten: the app builds fine and behaves exactly like the previous IPA.
+Cost us four builds (unsigned1-4 all shipped the September plugin, 788f5bc).
+
+Also: `PlaybackInfo` is declared nullable in the plugin's Dart API — always use
+`controller.playbackInfo?.position`, not `?.playbackInfo.position`.
