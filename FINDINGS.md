@@ -157,17 +157,29 @@ layer — an accurate seek. Note the tempting alternative (clamp the reported po
 to the target instead) is *worse*: frames between keyframe and target still play, so
 the host sees a frozen position for seconds and shows a false spinner.
 
-### 3.6 Plugin: a lifecycle race that killed playback
+### 3.6 Plugin (attempted, then reverted): lifecycle and buffering rework
 
-**Symptom:** rapid pause → play left a frozen frame with a running clock.
+**Attempt:** fix a real race — a pause/seek arriving while a decode was winding down
+made `startPump` see `pumping == true` and only move the clock, so nothing restarted;
+plus a buffering signal, presented-frame positions, seek floors and stall gating.
 
-**Cause:** a pause/seek arriving while a decode was already winding down made
-`startPump` see `pumping == true` and only move the clock; the decode then returned
-"stopped" and nothing restarted. Also `displayLayerFailed` may be delivered on the
-enqueue queue, where invalidating a main-run-loop `Timer` is undefined.
+**Outcome: it stopped playback entirely.** The on-device log showed
+`sw invalidate` → `sw teardown` → `decode end video=0 audio=0 first=-1.000
+stopped=1 failures=0`: the backend was torn down before producing a single frame.
+The decode path was never the problem; the state machine wrapped around it was.
 
-**Fix:** the pump completion restarts playback when the user still wants it
-(`rate != 0 && !atEOF`), and the layer-failure handler hops to main first.
+**Resolution:** `ios/` and `lib/` were restored to `788f5bc` — the last revision that
+demonstrably played — and the position tick was re-added as **+29 lines in one file**
+(`NativeVideoPlayerViewController`), a 4 Hz poll of `sw.getPlaybackPosition()` in the
+controller that already owns the `AVPlayer` periodic observer. It cannot touch
+decoding, the clock or teardown.
+
+The position value comes from the software player's own clock, so it is "leading"
+rather than frame-exact; that is acceptable for a seek bar and is a deliberate
+trade of accuracy for not breaking playback. Everything else from the rework
+(accurate seeks via keyframe floors, presented-frame positions, stall gating, the
+buffering callback) remains **open** and should be re-attempted only behind its own
+test, one change at a time.
 
 ---
 
