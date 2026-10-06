@@ -49,12 +49,10 @@ class VideoPlayerNotifier extends StateNotifier<VideoPlayerState> {
   /// plus tick diagnostics for the on-screen debug readout. The host used to
   /// infer buffering from a missing position tick, which cannot tell "the
   /// position did not move" from "the decoder is starved".
-  bool _nativeBuffering = false;
   int _tickCount = 0;
   int _lastTickMs = -1;
   DateTime? _lastTickAt;
 
-  bool get nativeBuffering => _nativeBuffering;
   int get tickCount => _tickCount;
   int get lastTickMs => _lastTickMs;
   int get msSinceLastTick => _lastTickAt == null
@@ -243,27 +241,6 @@ class VideoPlayerNotifier extends StateNotifier<VideoPlayerState> {
     );
   }
 
-  /// ADDITIVE: native buffering signal.
-  void onNativeBufferingChanged(bool buffering) {
-    if (!mounted) {
-      return;
-    }
-    _nativeBuffering = buffering;
-    if (buffering) {
-      _bufferingTimer?.cancel();
-      if (state.status == VideoPlaybackStatus.playing) {
-        state = state.copyWith(status: VideoPlaybackStatus.buffering);
-      }
-    } else if (state.status == VideoPlaybackStatus.buffering) {
-      state = state.copyWith(
-        status: _controller?.playbackInfo?.status == PlaybackStatus.playing
-            ? VideoPlaybackStatus.playing
-            : VideoPlaybackStatus.paused,
-      );
-    }
-    _log.fine('native buffering=$buffering ticks=$_tickCount last=${_lastTickMs}ms');
-  }
-
   void onNativeStatusChanged() {
     if (!mounted) {
       return;
@@ -294,11 +271,6 @@ class VideoPlayerNotifier extends StateNotifier<VideoPlayerState> {
   }
 
   void _startBufferingTimer() {
-    // ADDITIVE: the backend tells us when it is actually starved; do not let
-    // the timeout-based guess override that.
-    if (_nativeBuffering) {
-      return;
-    }
     _bufferingTimer?.cancel();
     _bufferingTimer = Timer(const Duration(seconds: 1), () {
       if (mounted && state.status != VideoPlaybackStatus.completed) {

@@ -282,13 +282,6 @@ class _NativeVideoViewerState extends ConsumerState<NativeVideoViewer> with Widg
     }).catchError((_) => <String>[]);
   }
 
-  void _onPlaybackBuffering() {
-    _notifier.onNativeBufferingChanged(_controller?.onPlaybackBuffering.value ?? false);
-    if (mounted) {
-      setState(() {});
-    }
-  }
-
   void _onPlaybackStatusChanged() {
     if (!mounted) {
       return;
@@ -334,7 +327,6 @@ class _NativeVideoViewerState extends ConsumerState<NativeVideoViewer> with Widg
     nc.onPlaybackStatusChanged.addListener(_onPlaybackStatusChanged);
     nc.onPlaybackReady.addListener(_onPlaybackReady);
     nc.onPlaybackEnded.addListener(_onPlaybackEnded);
-    nc.onPlaybackBuffering.addListener(_onPlaybackBuffering);
 
     _controller = nc;
 
@@ -351,7 +343,6 @@ class _NativeVideoViewerState extends ConsumerState<NativeVideoViewer> with Widg
     final _position = playback.position;
     final _duration = playback.duration;
     final notifier = ref.read(videoPlayerProvider(widget.asset.heroTag).notifier);
-    final _nativeBuffering = notifier.nativeBuffering;
     final _tickCount = notifier.tickCount;
     final _lastTickMs = notifier.lastTickMs;
     final _msSinceLastTick = notifier.msSinceLastTick;
@@ -368,7 +359,7 @@ class _NativeVideoViewerState extends ConsumerState<NativeVideoViewer> with Widg
             ),
             Center(
               child: AnimatedOpacity(
-                opacity: status == VideoPlaybackStatus.buffering || _nativeBuffering ? 1.0 : 0.0,
+                opacity: status == VideoPlaybackStatus.buffering ? 1.0 : 0.0,
                 duration: const Duration(milliseconds: 400),
                 child: const CircularProgressIndicator(),
               ),
@@ -406,7 +397,7 @@ class _NativeVideoViewerState extends ConsumerState<NativeVideoViewer> with Widg
                     child: Text(
                       'pos=${_position.inMilliseconds}ms ticks=$_tickCount '
                       'last=${_lastTickMs}ms age=${_msSinceLastTick}ms '
-                      'buf=$_nativeBuffering st=$status dur=${_duration.inMilliseconds}ms '
+                      'st=$status dur=${_duration.inMilliseconds}ms '
                       'err=${_error ?? '-'}',
                       style: const TextStyle(fontSize: 9, color: Colors.white),
                     ),
