@@ -47,6 +47,7 @@ jobs:
       - name: Build driver
         run: |
           H=.github/av1-harness
+          sed 's/private //g' plugin/ios/Classes/AV1/AV1SoftwarePlayer.swift > Player.swift
           clang -O2 -fobjc-arc -Ideps/include -c plugin/ios/Classes/AV1/GAV1Player.m -o GAV1Player.o
           swiftc -O -Xcc -Ideps/include -Xcc -Iplugin/ios/Classes/AV1 -import-objc-header $H/Bridging.h \
             $H/Stubs.swift $H/main.swift \
@@ -54,7 +55,7 @@ jobs:
             plugin/ios/Classes/PlatformInterface/VideoSource.swift \
             plugin/ios/Classes/PlatformInterface/VideoInfo.swift \
             plugin/ios/Classes/PlatformInterface/NativeVideoPlayerApi.swift \
-            plugin/ios/Classes/AV1/AV1SoftwarePlayer.swift \
+            Player.swift \
             GAV1Player.o \
             -Ldeps/lib -lavformat -lavcodec -lswscale -lswresample -lavutil -ldav1d -lz -lbz2 -liconv \
             -framework AVFoundation -framework CoreMedia -framework CoreVideo -framework AudioToolbox \

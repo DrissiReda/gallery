@@ -22,11 +22,16 @@ func waitFor(_ body: (@escaping () -> Void) -> Void, _ label: String) {
     if !done { print("FAIL \(label) completion timeout"); failures += 1 }
 }
 
+func dump(_ player: AV1SoftwarePlayer, _ label: String) {
+    print("DBG \(label) primed=\(player.clockPrimed) active=\(player.pumpActive) stop=\(player.stopFlag) rate=\(player.rate) desired=\(player.desiredRate) tbRate=\(CMTimebaseGetRate(player.videoTimebase)) tb=\(CMTimebaseGetTime(player.videoTimebase).seconds) frames=\(player.videoFrameCount) vReady=\(player.displayLayer.isReadyForMoreMediaData) vStatus=\(player.displayLayer.status.rawValue) aReady=\(String(describing: player.audioRenderer?.isReadyForMoreMediaData))")
+}
+
 func expectAdvancing(_ player: AV1SoftwarePlayer, from minimum: Int64, _ label: String) {
     var samples: [Int64] = []
     for _ in 0..<8 {
         spin(0.5)
         samples.append(lastEventPosition)
+        dump(player, label)
     }
     print("INFO \(label) positions=\(samples) playing=\(player.isPlaying())")
     let advanced = samples.last! - samples.first! >= 2500
