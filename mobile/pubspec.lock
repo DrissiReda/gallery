@@ -1128,8 +1128,8 @@ packages:
     dependency: "direct main"
     description:
       path: "."
-      ref: av1-sw-decode-pr
-      resolved-ref: 7d786355757234fed836d9387fa2902a357adeba
+      ref: av1-pr-slim-test
+      resolved-ref: 70900b597bab3f9d23fad3ca62b3f1c41af5a3e8
       url: "https://github.com/DrissiReda/native_video_player"
     source: git
     version: "1.3.1"
