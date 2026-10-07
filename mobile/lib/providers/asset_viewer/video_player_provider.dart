@@ -45,19 +45,6 @@ class VideoPlayerNotifier extends StateNotifier<VideoPlayerState> {
   Timer? _bufferingTimer;
   Timer? _seekTimer;
   VideoPlaybackStatus? _holdStatus;
-  /// ADDITIVE: buffering as reported by the native backend (real signal),
-  /// plus tick diagnostics for the on-screen debug readout. The host used to
-  /// infer buffering from a missing position tick, which cannot tell "the
-  /// position did not move" from "the decoder is starved".
-  int _tickCount = 0;
-  int _lastTickMs = -1;
-  DateTime? _lastTickAt;
-
-  int get tickCount => _tickCount;
-  int get lastTickMs => _lastTickMs;
-  int get msSinceLastTick => _lastTickAt == null
-      ? -1
-      : DateTime.now().difference(_lastTickAt!).inMilliseconds;
 
   @override
   void dispose() {
@@ -214,9 +201,6 @@ class VideoPlayerNotifier extends StateNotifier<VideoPlayerState> {
   }
 
   void onNativePositionChanged() {
-    _tickCount++;
-    _lastTickMs = _controller?.playbackInfo?.position ?? -1;
-    _lastTickAt = DateTime.now();
     if (!mounted || (_seekTimer?.isActive ?? false)) {
       return;
     }
