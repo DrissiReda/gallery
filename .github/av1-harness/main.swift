@@ -40,8 +40,13 @@ func expectAdvancing(_ player: AV1SoftwarePlayer, from minimum: Int64, _ label: 
 
 let api = NativeVideoPlayerApi(messenger: StubMessenger(), viewId: 1)
 let player = AV1SoftwarePlayer(api: api)
-let source = VideoSource(from: ["path": CommandLine.arguments[1], "type": "network", "headers": [String: String]()])!
-guard player.tryOpen(source) else { print("FAIL tryOpen"); exit(1) }
+var source = VideoSource(from: ["path": CommandLine.arguments[1], "type": "network", "headers": [String: String]()])!
+if !player.tryOpen(source) {
+    print("FAIL network tryOpen")
+    failures += 1
+    source = VideoSource(from: ["path": CommandLine.arguments[2], "type": "file", "headers": [String: String]()])!
+    guard player.tryOpen(source) else { print("FAIL file tryOpen"); exit(1) }
+}
 api.delegate = player
 player.loadVideoSource(videoSource: source)
 player.play()

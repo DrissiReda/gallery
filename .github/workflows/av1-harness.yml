@@ -64,4 +64,5 @@ jobs:
           cd .github/av1-harness
           python3 serve.py 8471 &
           sleep 1
-          ../../driver http://127.0.0.1:8471/sample.mp4
+          curl -s -o /dev/null -w '%{http_code} %{size_download}\\n' -r 0-99 http://127.0.0.1:8471/sample.mp4
+          ../../driver http://127.0.0.1:8471/sample.mp4 "$PWD/sample.mp4"
