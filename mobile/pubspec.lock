@@ -1128,8 +1128,8 @@ packages:
     dependency: "direct main"
     description:
       path: "."
-      ref: av1-pr-slim-test
-      resolved-ref: 70900b597bab3f9d23fad3ca62b3f1c41af5a3e8
+      ref: av1-pr-clean
+      resolved-ref: 92404277ad10a7b34934767f41e67cf771a3685e
       url: "https://github.com/DrissiReda/native_video_player"
     source: git
     version: "1.3.1"
