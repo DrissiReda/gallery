@@ -1,0 +1,65 @@
+name: AV1 Harness
+on:
+  workflow_dispatch:
+    inputs:
+      plugin_ref:
+        default: av1-pr-clean
+permissions:
+  contents: read
+jobs:
+  harness:
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: DrissiReda/native_video_player
+          ref: ${{ inputs.plugin_ref }}
+          path: plugin
+          persist-credentials: false
+      - name: Build FFmpeg and dav1d
+        run: |
+          brew install meson ninja nasm pkg-config
+          curl -sL https://downloads.videolan.org/videolan/dav1d/1.5.4/dav1d-1.5.4.tar.xz | tar -xJ
+          curl -sL https://ffmpeg.org/releases/ffmpeg-7.1.1.tar.xz | tar -xJ
+          meson setup build-dav1d dav1d-1.5.4 --prefix "$PWD/deps" --default-library=static --buildtype=release \
+            -Denable_tools=false -Denable_examples=false -Denable_tests=false "-Dbitdepths=['8', '16']"
+          ninja -C build-dav1d install
+          export PKG_CONFIG_PATH="$PWD/deps/lib/pkgconfig" PKG_CONFIG_LIBDIR="$PWD/deps/lib/pkgconfig"
+          mkdir build-ffmpeg && cd build-ffmpeg
+          ../ffmpeg-7.1.1/configure --prefix="$PWD/../deps" --target-os=darwin --arch=arm64 --cc=clang --enable-pic \
+            --extra-cflags="-O2 -I$PWD/../deps/include" --extra-ldflags="-L$PWD/../deps/lib" \
+            --enable-static --disable-shared --disable-autodetect --disable-debug --disable-doc --disable-programs \
+            --disable-avdevice --disable-postproc --disable-avfilter --disable-network --disable-hwaccels \
+            --disable-encoders --disable-muxers --disable-decoders --disable-parsers --disable-bsfs \
+            --disable-demuxers --disable-protocols --disable-devices --disable-filters --disable-gpl --disable-nonfree \
+            --enable-swscale --enable-swresample \
+            --enable-decoder=libdav1d --enable-decoder=aac --enable-decoder=opus \
+            --enable-parser=av1 --enable-parser=aac --enable-parser=opus \
+            --enable-demuxer=mov --enable-demuxer=matroska --enable-protocol=file --enable-libdav1d
+          make -j"$(sysctl -n hw.ncpu)" >/dev/null
+          make install >/dev/null
+      - name: Build driver
+        run: |
+          H=.github/av1-harness
+          clang -O2 -fobjc-arc -Ideps/include -c plugin/ios/Classes/AV1/GAV1Player.m -o GAV1Player.o
+          swiftc -O -Xcc -Ideps/include -Xcc -Iplugin/ios/Classes/AV1 -import-objc-header $H/Bridging.h \
+            $H/Stubs.swift $H/main.swift \
+            plugin/ios/Classes/PlatformInterface/VideoSourceType.swift \
+            plugin/ios/Classes/PlatformInterface/VideoSource.swift \
+            plugin/ios/Classes/PlatformInterface/VideoInfo.swift \
+            plugin/ios/Classes/PlatformInterface/NativeVideoPlayerApi.swift \
+            plugin/ios/Classes/AV1/AV1SoftwarePlayer.swift \
+            GAV1Player.o \
+            -Ldeps/lib -lavformat -lavcodec -lswscale -lswresample -lavutil -ldav1d -lz -lbz2 -liconv \
+            -framework AVFoundation -framework CoreMedia -framework CoreVideo -framework AudioToolbox \
+            -o driver
+      - name: Run driver
+        run: |
+          cd .github/av1-harness
+          python3 serve.py 8471 &
+          sleep 1
+          ../../driver http://127.0.0.1:8471/sample.mp4
