@@ -68,11 +68,11 @@ for target in [6000, 9000, 12000] as [Int64] {
 waitFor({ player.seekTo(position: 13000, completion: $0) }, "release seek")
 player.play()
 player.setPlaybackSpeed(speed: 1)
-expectAdvancing(player, from: 10000, "scrub while playing")
+expectAdvancing(player, from: 12900, "scrub while playing")
 
 // Seek while playing, no pause.
 waitFor({ player.seekTo(position: 2000, completion: $0) }, "plain seek")
-expectAdvancing(player, from: 0, "plain seek")
+expectAdvancing(player, from: 1900, "plain seek")
 
 // Paused seek, wait, then play.
 player.pause()
@@ -82,7 +82,7 @@ spin(1)
 print("INFO paused-seek position=\(player.getPlaybackPosition())")
 player.play()
 player.setPlaybackSpeed(speed: 1)
-expectAdvancing(player, from: 9000, "paused seek then play")
+expectAdvancing(player, from: 10900, "paused seek then play")
 
 // Pause and resume.
 player.pause()
