@@ -23,7 +23,7 @@ func waitFor(_ body: (@escaping () -> Void) -> Void, _ label: String) {
 }
 
 func dump(_ player: AV1SoftwarePlayer, _ label: String) {
-    print("DBG \(label) primed=\(player.clockPrimed) active=\(player.pumpActive) stop=\(player.stopFlag) rate=\(player.rate) desired=\(player.desiredRate) tbRate=\(CMTimebaseGetRate(player.videoTimebase)) tb=\(CMTimebaseGetTime(player.videoTimebase).seconds) frames=\(player.videoFrameCount) vReady=\(player.displayLayer.isReadyForMoreMediaData) vStatus=\(player.displayLayer.status.rawValue) aReady=\(String(describing: player.audioRenderer?.isReadyForMoreMediaData))")
+    print("DBG \(label) primed=\(player.clockPrimed) active=\(player.pumpActive) stop=\(player.stopFlag) rate=\(player.rate) tbRate=\(CMTimebaseGetRate(player.videoTimebase)) tb=\(CMTimebaseGetTime(player.videoTimebase).seconds) vReady=\(player.displayLayer.isReadyForMoreMediaData) vStatus=\(player.displayLayer.status.rawValue) aReady=\(String(describing: player.audioRenderer?.isReadyForMoreMediaData))")
 }
 
 func expectAdvancing(_ player: AV1SoftwarePlayer, from minimum: Int64, _ label: String) {
@@ -91,6 +91,12 @@ spin(1)
 print("INFO paused hold \(paused) -> \(player.getPlaybackPosition())")
 player.play()
 expectAdvancing(player, from: paused - 100, "resume")
+
+// Play to the end, then play again restarts from the beginning.
+waitFor({ player.seekTo(position: 18500, completion: $0) }, "end seek")
+spin(3)
+player.play()
+expectAdvancing(player, from: 0, "replay after end")
 
 player.invalidate()
 print(failures == 0 ? "RESULT PASS" : "RESULT FAIL \(failures)")
