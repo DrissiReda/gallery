@@ -116,7 +116,9 @@ jobs:
 
       - name: Install CocoaPods dependencies
         working-directory: ./mobile/ios
-        run: pod install
+        run: |
+          brew install meson ninja pkg-config
+          pod install
 
       - name: Dump resolved build settings
         working-directory: ./mobile/ios

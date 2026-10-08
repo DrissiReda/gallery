@@ -9,6 +9,21 @@ on:
 permissions:
   contents: read
 jobs:
+  deps:
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: DrissiReda/native_video_player
+          ref: ${{ inputs.plugin_ref || 'av1-pr-clean' }}
+          persist-credentials: false
+      - name: Build iOS dependencies
+        run: |
+          brew install meson ninja pkg-config
+          time sh ios/build-deps.sh
+          find ios/AV1Deps -maxdepth 3 | head -20
+          for a in $(find ios/AV1Deps/AV1Deps.xcframework -name '*.a'); do lipo -info "$a"; otool -l "$a" | grep -A3 LC_BUILD_VERSION | grep -m2 -E "platform|minos"; done
   harness:
     runs-on: macos-15
     timeout-minutes: 40
