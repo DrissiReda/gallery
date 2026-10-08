@@ -23,14 +23,14 @@ func waitFor(_ body: (@escaping () -> Void) -> Void, _ label: String) {
 }
 
 func dump(_ player: AV1SoftwarePlayer, _ label: String) {
-    print("DBG \(label) primed=\(player.clockPrimed) active=\(player.pumpActive) stop=\(player.stopFlag) rate=\(player.rate) tbRate=\(CMTimebaseGetRate(player.videoTimebase)) tb=\(CMTimebaseGetTime(player.videoTimebase).seconds) vReady=\(player.displayLayer.isReadyForMoreMediaData) vStatus=\(player.displayLayer.status.rawValue) aReady=\(String(describing: player.audioRenderer?.isReadyForMoreMediaData))")
+    print("DBG \(label) primed=\(player.clockPrimed) pumping=\(player.pumping) stop=\(player.engine.stop) rate=\(player.rate) tbRate=\(CMTimebaseGetRate(player.videoTimebase)) tb=\(CMTimebaseGetTime(player.videoTimebase).seconds) vReady=\(player.displayLayer.isReadyForMoreMediaData) aReady=\(player.audioRenderer.isReadyForMoreMediaData)")
 }
 
 func expectAdvancing(_ player: AV1SoftwarePlayer, from minimum: Int64, _ label: String) {
     var samples: [Int64] = []
     for _ in 0..<8 {
         spin(0.5)
-        samples.append(lastEventPosition)
+        samples.append(player.getPlaybackPosition())
         dump(player, label)
     }
     print("INFO \(label) positions=\(samples) playing=\(player.isPlaying())")
@@ -44,14 +44,8 @@ func expectAdvancing(_ player: AV1SoftwarePlayer, from minimum: Int64, _ label: 
 }
 
 let api = NativeVideoPlayerApi(messenger: StubMessenger(), viewId: 1)
-let player = AV1SoftwarePlayer(api: api)
-var source = VideoSource(from: ["path": CommandLine.arguments[1], "type": "network", "headers": [String: String]()])!
-if !player.tryOpen(source) {
-    print("FAIL network tryOpen")
-    failures += 1
-    source = VideoSource(from: ["path": CommandLine.arguments[2], "type": "file", "headers": [String: String]()])!
-    guard player.tryOpen(source) else { print("FAIL file tryOpen"); exit(1) }
-}
+let source = VideoSource(from: ["path": CommandLine.arguments[1], "type": "file", "headers": [String: String]()])!
+guard let player = AV1SoftwarePlayer(api: api, videoSource: source) else { print("FAIL open"); exit(1) }
 api.delegate = player
 player.loadVideoSource(videoSource: source)
 player.play()
@@ -98,6 +92,13 @@ spin(3)
 player.play()
 expectAdvancing(player, from: 0, "replay after end")
 
-player.invalidate()
+// Video without audio.
+let silentSource = VideoSource(from: ["path": CommandLine.arguments[2], "type": "file", "headers": [String: String]()])!
+let silentApi = NativeVideoPlayerApi(messenger: StubMessenger(), viewId: 2)
+guard let silent = AV1SoftwarePlayer(api: silentApi, videoSource: silentSource) else { print("FAIL open silent"); exit(1) }
+silentApi.delegate = silent
+silent.loadVideoSource(videoSource: silentSource)
+silent.play()
+expectAdvancing(silent, from: 0, "no audio")
 print(failures == 0 ? "RESULT PASS" : "RESULT FAIL \(failures)")
 exit(failures == 0 ? 0 : 1)
