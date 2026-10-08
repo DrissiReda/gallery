@@ -6,6 +6,32 @@ do, what actually broke, what we learned, and how the build pipeline works.
 Scope: the Flutter app fork (`DrissiReda/gallery`) plus its iOS video plugin fork
 (`DrissiReda/native_video_player`), built as an unsigned IPA for TrollStore.
 
+## Current status — 2026-10-07
+
+- AV1 decode, hardware selection, native-layer routing, and software position ticks
+  live in `native_video_player`. Gallery's `video_viewer.widget.dart` and
+  `video_player_provider.dart` match v5.6.0; no AV1 player/UI logic was added there.
+- Gallery's existing `AppDelegate` already hands `URLSessionManager.cookieStorage`
+  to the plugin. The plugin reuses that hook for authenticated network AV1.
+- Plugin package minimum remains **iOS 9**. Software AV1 runs on **iOS 11+** because
+  AVSampleBuffer audio/synchronizer and VideoToolbox APIs require iOS 11; iOS 9–10
+  continue through AVPlayer.
+- Current Gallery test pin: `pubspec.yaml` ref `av1-sw-decode-pr`, lock SHA
+  `7d786355757234fed836d9387fa2902a357adeba`.
+- `unsigned9` used plugin `788f5bc`; user confirmed it worked. `unsigned10` played and
+  scrubbed but kept the spinner: Gallery's 1 s buffering timeout resets only on
+  changed position callbacks, and software AV1 emitted none. Plugin commit `7d78635`
+  adds a deduplicated 4 Hz software-clock poll in the iOS controller. It does not
+  alter decoding or teardown. `unsigned11` contains this fix:
+  `/data/filebrowser/files/admin/NoodleGallery-unsigned11.ipa`, 33,827,913 bytes,
+  SHA256 `70df3997edef9582c2285889c7fe417a4e4c484b4c1a40a51a36a61117f1d57e`, built
+  in Gallery CI run `37633392089`. Plugin engine/typecheck CI `37632870181` passed;
+  unsigned11 device confirmation still pending.
+- No production AV1 file logger or Gallery debug overlay remains. Gallery's player
+  widget/provider are unchanged; only its test dependency pin differs.
+- Draft plugin PRs #19 and #20 were closed at user's request; no PR currently open.
+  Their packaging experiments and the external dependency asset are recorded in §10.
+
 ---
 
 ## 1. The problem we started from
@@ -38,20 +64,20 @@ There was nothing to copy except confirmation that the architecture was sane.
 
 ```
 Gallery Flutter app (mobile/)
-  └─ native_video_player (git dep, branch av1-sw-decode)
+  └─ native_video_player (test git dep, branch av1-sw-decode-pr)
        ios/Classes/
-         NativeVideoPlayerViewController.swift   AVPlayer path + backend selection
-         NativeVideoPlayerView.swift             UIView hosting the layers
-         AV1/AV1Capability.swift                 VTIsHardwareDecodeSupported(kCMVideoCodecType_AV1)
-         AV1/AV1SoftwarePlayer.swift             software backend (clock, renderer, audio)
-         AV1/GAV1Player.{h,m}                    FFmpeg engine: demux + decode + NV12
-         AV1/GAV1FileLog.{h,m}                   on-device log → Documents/av1debug.log
-         VideoProxyServer.swift                  localhost HTTP proxy (AVPlayer path only)
+          NativeVideoPlayerViewController.swift   AVPlayer path + backend selection
+          NativeVideoPlayerView.swift             UIView hosting the layers
+          AV1/AV1Capability.swift                 VTIsHardwareDecodeSupported(kCMVideoCodecType_AV1)
+          AV1/AV1SoftwarePlayer.swift             software backend (clock, renderer, audio)
+          AV1/GAV1Player.{h,m}                    FFmpeg engine: demux + decode + NV12
+          Plugin/SwiftNativeVideoPlayerPlugin.swift cookie-store bridge
+          VideoProxyServer.swift                  localhost HTTP proxy (AVPlayer path only)
 ```
 
-Selection: on hardware-AV1 devices nothing changes; otherwise the plugin opens the
-source with the FFmpeg engine first and only falls back to the untouched `AVPlayer`
-path if that fails.
+Selection: iOS 11+ hardware-AV1 devices stay on AVPlayer. Otherwise the plugin probes
+off-main-thread; successfully opened AV1 uses the software backend, while non-AV1 and
+open failures fall back to AVPlayer. iOS 9–10 always use AVPlayer.
 
 Engine configuration (fixed at build time, vendored as static XCFrameworks):
 FFmpeg 7.1.1 built `--disable-gpl --disable-nonfree` with
@@ -63,8 +89,8 @@ LGPL matters because this is a real app, not a personal build.
 
 ## 3. Defects found and fixed
 
-Ordered as they were found. Each entry lists the symptom, the actual cause, and the
-fix that shipped.
+Chronological findings. Some remedies below were later reverted; §3.6 and §10
+describe the current implementation.
 
 ### 3.1 Server: `/video/playback` returned 404 (not a decoder problem)
 
@@ -94,7 +120,7 @@ Verified live through the public gateway:
 encoded rows at all. The user does not want H264 re-encodes, so
 `ffmpeg.transcode: never` is the intended setting.
 
-### 3.2 Plugin: a user stop was reported as end-of-stream
+### 3.2 Plugin experiment: stop-as-EOF (not in current tree)
 
 **Symptom:** every pause emitted `onPlaybackEnded`, and the next `play()` restarted
 the video from 0; seeks emitted "ended" too.
@@ -102,10 +128,11 @@ the video from 0; seeks emitted "ended" too.
 **Cause:** `GAV1Player.m` reported `nil` from its completion handler whenever
 `-requestStop` had been called, and `nil` meant "clean EOF" to the Swift backend.
 
-**Fix:** a distinct `GAV1ErrorStopped` sentinel (domain `GAV1Player`, code `-1000`);
-`AV1SoftwarePlayer` returns early on it — neither "ended" nor "error".
+**Attempted fix:** a distinct `GAV1ErrorStopped` sentinel (domain `GAV1Player`, code
+`-1000`). It appeared in an intermediate commit but is absent from the current
+plugin source restored to the last playback-good baseline.
 
-### 3.3 Plugin: decode failures were silently swallowed
+### 3.3 Plugin experiment: verbose decode diagnostics (removed)
 
 **Symptom:** any decode problem became a black picture with no diagnosis, and the UI
 sat on a spinner.
@@ -114,9 +141,9 @@ sat on a spinner.
 `sws_scale` return values ignored; `onPlaybackReady` fired before a single frame
 existed.
 
-**Fix:** failures are logged (`GAV1FileLog`, with `av_err2str`), and a run that ends
-with zero frames reports `code -5 "decoder produced no frames (N decoder failures)"`
-so the host receives `onError`.
+**Attempted fix:** temporary file logging, decoder counters, and a zero-frame error.
+The file logger wrote media URLs/paths to `Documents/av1debug.log`; it was removed
+from the PR candidate. Normal error callbacks remain; diagnostic file logging does not.
 
 ### 3.4 App: spinner and seek bar driven by a guess, not by the player
 
@@ -131,55 +158,41 @@ are ignored while a 150 ms seek timer is active (`:204`). The `AVPlayer` backend
 emits that tick from a periodic time observer; the software backend emitted nothing
 at all.
 
-**Fix, in three steps:**
-1. The software backend reports position at 4 Hz, deduped, re-armed on every path
-   that can leave playback running (play, loop restart, seek completion, load,
-   teardown).
-2. Position comes from the **presentation time of the last frame that actually
-   reached the display layer**, not from the host-clock timebase — the clock keeps
-   advancing while a starved decoder produces no picture, which made a real stall
-   look like smooth progress (moving seek bar, no spinner). Stall signalling then
-   falls out for free: no frames, no ticks, and the host shows its buffering state.
-3. A real buffering signal was added end to end (`onPlaybackBuffering`): `AVPlayer`
-   reports `timeControlStatus == .waitingToPlayAtSpecifiedRate`, the software
-   backend reports frame starvation. The app binds the spinner to it and keeps the
-   1-second timeout only as a fallback.
+**Current fix:** the plugin controller polls `AV1SoftwarePlayer.getPlaybackPosition()`
+at 4 Hz while the software backend is active, dedupes values, sends
+`onPlaybackPositionChanged`, then stops polling on fallback or teardown. This feeds
+Gallery's existing progress/buffering logic without changing Gallery player code or
+the decoder lifecycle. Frame-gated ticks and a new buffering callback were tried,
+then reverted because they broke playback.
 
-### 3.5 App: seeks landed on the keyframe *before* the target
+### 3.5 Plugin experiment: accurate keyframe-floor seeks (not in current tree)
 
 **Cause:** `avformat_seek_file(..., AVSEEK_FLAG_BACKWARD)` lands on a keyframe at or
 before the requested time, and nothing discarded the frames in between, so the seek
 bar walked backwards by up to a GOP (server `gopSize: 0` falls back to 256 frames
 ≈ 8.5 s).
 
-**Fix:** frames below the seek target are dropped before they reach the display
-layer — an accurate seek. Note the tempting alternative (clamp the reported position
-to the target instead) is *worse*: frames between keyframe and target still play, so
-the host sees a frozen position for seconds and shows a false spinner.
+**Attempted fix:** drop frames below the seek target before display. This seek-floor
+change belonged to the reverted rework; current source uses its existing FFmpeg
+keyframe seek behavior.
 
-### 3.6 Plugin (attempted, then reverted): lifecycle and buffering rework
+### 3.6 Plugin lifecycle rework: reverted after it stopped playback
 
-**Attempt:** fix a real race — a pause/seek arriving while a decode was winding down
-made `startPump` see `pumping == true` and only move the clock, so nothing restarted;
-plus a buffering signal, presented-frame positions, seek floors and stall gating.
+**Attempt:** a stop/EOF sentinel, sequence-header resend, decoder error counters,
+presented-frame positions, keyframe-floor seeks, stall gating and a buffering callback.
 
-**Outcome: it stopped playback entirely.** The on-device log showed
-`sw invalidate` → `sw teardown` → `decode end video=0 audio=0 first=-1.000
-stopped=1 failures=0`: the backend was torn down before producing a single frame.
-The decode path was never the problem; the state machine wrapped around it was.
+**Outcome:** playback stopped. The on-device log showed `sw invalidate` → `sw teardown`
+→ `decode end video=0 audio=0 first=-1.000 stopped=1 failures=0`: teardown arrived
+before the decoder produced a frame. Those state-machine changes were reverted;
+they are not in current source.
 
-**Resolution:** `ios/` and `lib/` were restored to `788f5bc` — the last revision that
-demonstrably played — and the position tick was re-added as **+29 lines in one file**
-(`NativeVideoPlayerViewController`), a 4 Hz poll of `sw.getPlaybackPosition()` in the
-controller that already owns the `AVPlayer` periodic observer. It cannot touch
-decoding, the clock or teardown.
-
-The position value comes from the software player's own clock, so it is "leading"
-rather than frame-exact; that is acceptable for a seek bar and is a deliberate
-trade of accuracy for not breaking playback. Everything else from the rework
-(accurate seeks via keyframe floors, presented-frame positions, stall gating, the
-buffering callback) remains **open** and should be re-attempted only behind its own
-test, one change at a time.
+**Final position fix:** after unsigned10 played and scrubbed but kept the spinner, the
+plugin controller gained a deduplicated 4 Hz timer reading `getPlaybackPosition()`.
+This reports the software player's host-clock position and leaves decoding, clock
+control, and teardown untouched. It is less precise than presented-frame timing and
+may advance during a decoder stall; the tradeoff avoids the regressions from the
+larger rework. Shipped in plugin commit `7d78635` and unsigned11; device verification
+of unsigned11 remains pending.
 
 ---
 
@@ -199,7 +212,8 @@ the very first packet — exactly the "nothing plays at all" symptom seen in
 `unsigned5`.105 lines of scanner/injection code plus its test were deleted rather
 than kept "just in case".
 
-**Kept from that commit:** the stop/EOF sentinel and decode-failure reporting.
+The stop/EOF sentinel and enhanced decode-failure reporting from that iteration
+were later removed in the playback rollback; they are not in current source.
 
 ---
 
@@ -207,7 +221,7 @@ than kept "just in case".
 
 ### 5.1 Four builds that changed nothing (`pubspec.lock`)
 
-`pubspec.yaml` asks for the plugin by **branch ref** (`av1-sw-decode`), but
+`pubspec.yaml` asks for the plugin by **branch ref** (`av1-sw-decode-pr`), but
 `mobile/pubspec.lock` carries a `resolved-ref` SHA and `pub` honours the lock for git
 dependencies. CI kept compiling the September plugin (`788f5bc`) for
 `unsigned1`–`unsigned4` — four 15-minute builds, four identical binaries on the
@@ -216,22 +230,19 @@ device, and a whole round of "the fix didn't work" misdirected at the decoder.
 **Rule:** after every plugin push, bump the lock:
 
 ```bash
-NEW=$(git ls-remote git@github.com:DrissiReda/native_video_player.git refs/heads/av1-sw-decode | cut -f1)
+NEW=$(git ls-remote git@github.com:DrissiReda/native_video_player.git refs/heads/av1-sw-decode-pr | cut -f1)
 # mobile/pubspec.lock → native_video_player.description.resolved-ref = $NEW
 ```
 
 Symptom to recognise: "the new build behaves exactly like the old one".
 
-### 5.2 No way to see inside the phone
+### 5.2 No way to see inside the phone (temporary diagnostics removed)
 
-The host has no Mac and the phone is not attached over USB, so `NSLog` is invisible.
-The native side therefore writes `Documents/av1debug.log`, but extracting it through
-the Files app was never done. After several blind iterations the log was rendered
-**on screen** over the video (tail, refreshed every 3 s), next to a compact readout:
-`pos=… ticks=… last=… age=…ms buf=… st=… dur=… err=…`.
-
-That readout exists because position ticks are the app's *only* signal for both the
-seek bar and buffering. Seeing them removes all inference.
+The plugin briefly wrote `Documents/av1debug.log`; Gallery temporarily enabled Files
+sharing and displayed the log tail/readout on screen. The logger, overlays, and Files
+sharing flags were removed before unsigned9. Do not re-add them to the production
+player. The useful discovery was that changed position callbacks drive both the seek
+bar and Gallery's inferred buffering state.
 
 ### 5.3 Guessing instead of measuring
 
@@ -262,13 +273,15 @@ MikroTik hairpin NAT hides the real client IP.
 
 ## 6. Lessons worth keeping
 
-1. **A spinner is a protocol, not a decoration.** With no buffering callback, the app
-   inferred buffering from absent position ticks. Any native backend added to this
-   plugin must emit `onPlaybackPositionChanged`, or the UI invents a fault.
-2. **Report what is true, not what is convenient.** The host-clock timebase looked
-   like progress while the picture was frozen. Presented-frame progress cannot lie.
-3. **Silence is a valid signal.** "No tick" is how the host detects buffering; a
-   backend that keeps ticking through a stall destroys that signal.
+1. **A spinner is a protocol, not a decoration.** Gallery infers buffering from
+   changed `onPlaybackPositionChanged` callbacks; the software backend must provide
+   them for progress and buffering UI to work.
+2. **Clock and presented-frame positions differ.** Frame progress is more accurate,
+   but the frame-gated implementation broke playback and was reverted. Current code
+   uses clock position for low-risk progress updates.
+3. **Clock ticks can mask a real stall.** The timer clears the spinner while the
+   software clock advances, even if frames stop. A future true buffering signal must
+   be isolated from decode lifecycle changes and verified on device.
 4. **Check that the artifact contains the fix** before theorising about the device.
    A stale lock file made four correct fixes look like no-ops.
 5. **Prove a theory on real content.** The sequence-header bug reproduced only in a
@@ -358,27 +371,114 @@ filebrowser `admin` share, which is how the IPA reaches the phone.
 | Thing | Where |
 |---|---|
 | App fork | `~/apps/custom/gallery`, `DrissiReda/gallery` @ `release/v5.6.0-ipa` |
-| Plugin fork | `~/apps/forks/native_video_player`, `DrissiReda/native_video_player` @ `av1-sw-decode` (pinned by ref in `mobile/pubspec.yaml`) |
+| Plugin test branch | `~/apps/forks/native_video_player`, `DrissiReda/native_video_player` @ `av1-sw-decode-pr` (pinned in Gallery's test build) |
+| Vendor PR candidate | `av1-sw-decode-pr-single` @ `f8680fb`; PR #19 closed after review |
+| Fetch-at-install PR candidate | `av1-pr-clean` @ `824a136`; PR #20 closed; podspec fetches release asset at install |
+| Dependency bundle | release `av1-ios9-deps-v1` on the plugin fork; pinned ZIP + checksum in the clean candidate podspec |
 | IPA workflow | `.github/workflows/build-unsigned-ipa.yml` |
 | Delivered IPAs | `/data/filebrowser/files/admin/NoodleGallery-unsigned<N>.ipa` |
 | Backup of deleted DB rows | `/data/artifacts/immich-stale-encodedvideo-20261005/` |
-| On-device log | app `Documents/av1debug.log` (now also rendered on screen) |
+| Current test pin | plugin SHA `7d786355757234fed836d9387fa2902a357adeba` in `mobile/pubspec.lock` |
 
 Related branches: `release/v5.6.0-stockplayer` (AVPlayer only, for comparison),
 `ci/unsigned-ipa` (workflow default branch).
 
 ## 9. Open items
 
-1. **Verify the current build on the device** — with the on-screen log, playback and
-   tick behaviour can be judged from evidence.
-2. Remove the debug overlays (log tail + readout) once playback is confirmed.
-3. Apply `ffmpeg.transcode: never` to stop new H264 encodes for 10-bit AV1.
-4. Client-side robustness: on a 404 from `/video/playback`, retry `/original`
+1. **Verify unsigned11 on the device** — confirm spinner clears while playback and
+   scrubbing remain responsive. No on-screen/native debug logger is present now.
+2. Apply `ffmpeg.transcode: never` to stop new H264 encodes for 10-bit AV1.
+3. Client-side robustness: on a 404 from `/video/playback`, retry `/original`
    (Range-capable), and stop the silent `AVPlayer` fallback so failures surface as
    errors instead of spinners.
-5. Known remaining races in the software backend: `displayLayer.flush()` from main
+4. Known remaining races in the software backend: `displayLayer.flush()` from main
    versus enqueue on the enqueue queue; `close()` after a 2 s deadline can free the
    decoder while a network read is parked; no colour attachments on the pixel
    buffers (wrong colours, not black); FFmpeg XCFrameworks have no simulator slice.
-6. `hwdec`-free 4K60 is too slow on A12–A15; cap software playback resolution if that
+5. `hwdec`-free 4K60 is too slow on A12–A15; cap software playback resolution if that
    matters.
+
+---
+
+## 10. Final scope, spinner fix, and PR packaging decisions
+
+### What belongs where
+
+- The AV1 decoder, hardware capability check, software render layer, audio rendering,
+  authenticated AVIO requests, fallback routing, and position callback all live in
+  `native_video_player`.
+- `mobile/lib/presentation/widgets/asset_viewer/video_viewer.widget.dart` and
+  `mobile/lib/providers/asset_viewer/video_player_provider.dart` are unchanged from
+  Gallery v5.6.0. Gallery adds no AV1 player/UI state machine.
+- Gallery's existing `AppDelegate` cookie-storage hookup is reused by the plugin.
+  The `URLSessionManager` app-group fallback is a separate unsigned/TrollStore auth
+  persistence fix, not an AV1 decoder change.
+- Gallery's `pubspec.yaml`/lock pin to the plugin fork is only needed to test an
+  unpublished plugin commit. After the plugin is accepted/released, use a normal
+  dependency update; no Gallery AV1 implementation PR is needed.
+
+### Spinner diagnosis and final behavior
+
+The app resets a 1-second buffering timer only when it receives a **changed**
+`onPlaybackPositionChanged` callback. Software decode initially emitted none because
+activating the software layer removes AVPlayer's periodic observer. Thus frames could
+play while Gallery displayed a spinner. Scrubbing still worked because seek commands
+travel through a separate callback.
+
+Plugin commit `7d78635` adds a deduplicated 4 Hz timer in
+`NativeVideoPlayerViewController`, polling `AV1SoftwarePlayer.getPlaybackPosition()`
+and emitting position callbacks. Timer stops on fallback/teardown; decoder loop,
+clock control, and teardown state machine remain unchanged. Position is host-clock
+based, not frame-presented: simple and stable, but can advance during a decoder stall.
+`unsigned10` played and scrubbed but still showed spinner; `unsigned11` contains the
+timer fix and awaits device confirmation.
+
+### iOS minimum and decoder availability
+
+`native_video_player.podspec` retains iOS 9.0. Software AV1 path is guarded for iOS
+11+ (AVSampleBuffer audio/synchronizer and VideoToolbox API availability); iOS 9–10
+keep the plugin's native AVPlayer fallback. Device FFmpeg/dav1d libraries were rebuilt
+for iOS 9, with `mach_absolute_time` replacing `clock_gettime` on Darwin. The existing
+single dav1d simulator slice was preserved, but the other FFmpeg libraries have no
+simulator slices.
+
+### Dependency options and PR status
+
+- No maintained drop-in FFmpeg+dav1d package was found that supports iOS 9 and exposes
+  the C API used by `GAV1Player`.
+- `ffmpeg_kit_flutter_new_video` provides FFmpeg/dav1d but requires iOS 14+, changes
+  the FFmpeg version/license terms, and brings a Flutter plugin dependency. It was not
+  selected because the plugin keeps its iOS 9 package floor.
+- Vendor-heavy PR #19 was closed. One-commit fetch-at-install PR #20 was also closed
+  after the user asked to stop PR creation. Clean candidate branch `av1-pr-clean`
+  (`824a136`) downloads a checksum-pinned XCFramework ZIP from the plugin fork's
+  `av1-ios9-deps-v1` release during CocoaPods preparation. Asset:
+  `native-video-player-ios9-deps-f8680fb.zip`, SHA256
+  `00ece99276ed7a35fcbc142b9e317b7a5384d08fae53340dae31a8023b30f6a3`. The ZIP
+  contains frameworks plus FFmpeg source/license material and iOS 9 patch; none are
+  in the clean branch Git diff. That branch also excludes CI/workflows, builder
+  scripts, tests, standalone license note, and `.gitattributes`. No PR is open.
+
+- The full test branch `av1-sw-decode-pr` still vendors frameworks directly; Gallery's
+  current test lock uses that branch. The clean fetch-at-install branch is a separate
+  packaging experiment, not the app's current dependency.
+
+### Build and test evidence
+
+- Plugin branch `av1-sw-decode-pr` at `7d78635` passed engine/iOS9 availability test
+  run `37632870181`. The iOS 9 framework rebuild passed minimum-version and
+  `clock_gettime` symbol checks in run `37617023302`.
+- Rebuilt six device archives total 4,996,648 bytes, down from 6,852,480 bytes
+  (~27% smaller) after limiting FFmpeg demuxers/protocols and disabling debug symbols.
+- Gallery unsigned11 was built from commit `2f4f7d7595b` with plugin SHA `7d78635`;
+  CI run `37633392089` passed. It has not yet been verified on-device.
+- The clean fetch-at-install candidate uses release `av1-ios9-deps-v1` in the same
+  plugin fork. ZIP `native-video-player-ios9-deps-f8680fb.zip`, SHA256
+  `00ece99276ed7a35fcbc142b9e317b7a5384d08fae53340dae31a8023b30f6a3`; it contains
+  the six frameworks plus corresponding license/source patch. Podspec downloads it at
+  install and extracts `XCFrameworks/` only. No upstream PR is open.
+
+Current IPA pin remains the full test branch `av1-sw-decode-pr` at
+`7d786355757234fed836d9387fa2902a357adeba`; unsigned11 is
+`/data/filebrowser/files/admin/NoodleGallery-unsigned11.ipa` (SHA256
+`70df3997edef9582c2285889c7fe417a4e4c484b4c1a40a51a36a61117f1d57e`).
