@@ -1,0 +1,5 @@
+FROM ghcr.io/open-noodle/gallery-server@sha256:1ba41c6bc57effbbf157114c2faa1eda9e79a48774bcc3f66eed25967f7b262a
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+ENV NODE_OPTIONS=--use-openssl-ca

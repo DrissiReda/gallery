@@ -162,7 +162,7 @@ ARG DEVICE
 
 COPY --from=mimalloc /libmimalloc.so /usr/lib/libmimalloc.so
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends tini ccache libgomp1 && \
+    apt-get install -y --no-install-recommends tini ccache ca-certificates libgomp1 && \
     apt-get autoremove -yqq && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* && \
