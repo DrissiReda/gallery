@@ -145,6 +145,15 @@ spec-citation-check:
 gallery-ml-smoke:
 	machine-learning/scripts/gallery-ml-smoke.sh
 
+.PHONY: runtime-server-push runtime-ml-push
+runtime-server-push:
+	docker build -f runtime/server/Dockerfile.runtime -t registry.redval.ovh/server/gallery-server:v5.9.0-runtime.1 runtime/server
+	docker push registry.redval.ovh/server/gallery-server:v5.9.0-runtime.1
+
+runtime-ml-push:
+	docker build -f runtime/machine-learning/Dockerfile.runtime -t registry.redval.ovh/server/gallery-ml:v5.9.0-cuda-runtime.1 runtime/machine-learning
+	docker push registry.redval.ovh/server/gallery-ml:v5.9.0-cuda-runtime.1
+
 .PHONY: fork-ownership-coverage-check
 fork-ownership-coverage-check:
 	git diff --name-only "upstream/$$(awk '$$1 == "upstream_branch:" { print $$2; exit }' docs/fork/ownership.yml)...origin/main" | sort > /tmp/gallery-fork-files.txt
