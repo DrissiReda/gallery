@@ -4,7 +4,11 @@ import native_video_player
 let CLIENT_CERT_LABEL = "app.alextran.immich.client_identity"
 let HEADERS_KEY = "immich.request_headers"
 let SERVER_URLS_KEY = "immich.server_urls"
-let APP_GROUP = Bundle.main.object(forInfoDictionaryKey: "AppGroupId") as! String
+let APP_GROUP = Bundle.main.object(forInfoDictionaryKey: "AppGroupId") as? String ?? ""
+/// True only when the shared app-group container actually exists (Apple-provisioned
+/// builds). Unsigned/TrollStore builds have no provisioned group: containerURL returns
+/// nil and group-backed storage silently stops persisting (login lost on every restart).
+let APP_GROUP_AVAILABLE = !APP_GROUP.isEmpty && FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: APP_GROUP) != nil
 let COOKIE_EXPIRY_DAYS: TimeInterval = 400
 
 enum AuthCookie: CaseIterable {
@@ -29,7 +33,12 @@ enum AuthCookie: CaseIterable {
 }
 
 extension UserDefaults {
-  static let group = UserDefaults(suiteName: APP_GROUP)!
+  /// Shared defaults when the app group exists, otherwise standard defaults.
+  /// (Without a provisioned group the suite silently drops writes.)
+  static let group: UserDefaults = {
+    if APP_GROUP_AVAILABLE, let g = UserDefaults(suiteName: APP_GROUP) { return g }
+    return .standard
+  }()
 }
 
 /// Manages a shared URLSession with SSL configuration support.
@@ -55,7 +64,10 @@ class URLSessionManager: NSObject {
     let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
     return "immich-ios/\(version)"
   }()
-  static let cookieStorage = HTTPCookieStorage.sharedCookieStorage(forGroupContainerIdentifier: APP_GROUP)
+  static let cookieStorage: HTTPCookieStorage = {
+    if APP_GROUP_AVAILABLE { return HTTPCookieStorage.sharedCookieStorage(forGroupContainerIdentifier: APP_GROUP) }
+    return .shared
+  }()
   private static var serverUrls: [String] = []
   private static var isSyncing = false
 

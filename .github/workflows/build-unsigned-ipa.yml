@@ -1,0 +1,187 @@
+name: Build Unsigned iOS IPA
+
+# Produces an UNSIGNED .ipa for sideloading with TrollStore.
+#
+# No Apple certificates, provisioning profiles, or repository secrets are
+# required: `flutter build ipa --no-codesign` emits the IPA with the app only
+# ad-hoc signed. TrollStore re-signs with its fake root certificate on install
+# and preserves any entitlements already present in the binary.
+#
+# Mirrors the toolchain setup of .github/workflows/gallery-build-mobile.yml
+# (mise for the pinned Flutter/Java/Node versions, CocoaPods for plugins) but
+# stops short of any signing or store upload.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref to build (branch/tag/SHA). Empty = this workflow ref.'
+        required: false
+        type: string
+        default: ''
+      version:
+        description: 'Fork version to stamp (e.g. v5.6.0). The app compares this against the server; a wrong value triggers "mobile app version is not compatible with the server". Empty = derive from the newest v* git tag.'
+        required: false
+        type: string
+        default: ''
+      build_mode:
+        description: 'Flutter build mode'
+        required: true
+        type: choice
+        options:
+          - release
+          - profile
+        default: release
+
+concurrency:
+  group: unsigned-ios-ipa-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-ipa:
+    name: Build unsigned IPA
+    runs-on: macos-15
+    timeout-minutes: 120
+
+    steps:
+      - name: Select Xcode 26
+        run: |
+          newest="$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)"
+          if [ -n "$newest" ]; then
+            sudo xcode-select -s "$newest/Contents/Developer"
+          fi
+          xcodebuild -version
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+          fetch-tags: true
+
+      # Applies the Noodle branding and stamps the fork version into the
+      # packages' version fields. Without this the mobile app keeps Flutter's
+      # placeholder version and the server rejects it as incompatible.
+      - name: Apply branding and stamp version
+        uses: ./.github/actions/apply-branding
+        with:
+          version: ${{ inputs.version }}
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: '17'
+
+      # Mise installs the exact pinned versions (Flutter, pnpm, node,
+      # openapi-generator) that the repo's mise.toml / mise.lock declare.
+      - name: Setup Mise
+        uses: immich-app/devtools/actions/use-mise@3bca63ca3c15020293b36b51737a3ee2c773340b
+        with:
+          github_token: ${{ github.token }}
+          working_directory: ./mobile
+
+      # Flutter's SwiftPM integration pins the generated plugin package to the
+      # framework's default iOS floor; CocoaPods honours the Podfile's
+      # `platform :ios, '15.0'`. Keep CocoaPods to match the project.
+      - name: Use CocoaPods for Flutter plugins
+        run: flutter config --no-enable-swift-package-manager
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.4'
+          bundler-cache: true
+          working-directory: ./mobile/ios
+
+      # native_video_player's podspec builds FFmpeg/dav1d at `pod install`
+      # time, and since v5.9.0 `install:ci` runs `pod install` on macOS, so
+      # the build tools must be present before it.
+      - name: Install AV1 build tools
+        run: brew install meson ninja pkg-config
+
+      - name: Install dependencies
+        run: mise //mobile:install:ci
+
+      # Dart API client is generated from the OpenAPI spec and is gitignored,
+      # so codegen must run before the first build. Since v5.9.0
+      # `mise //mobile:codegen` runs every generator (open-api, build_runner,
+      # drift, pigeon, translation); pigeon also emits the iOS *.g.swift files.
+      - name: Perform codegen
+        run: mise //mobile:codegen
+
+      - name: Install CocoaPods dependencies
+        working-directory: ./mobile/ios
+        run: pod install
+
+      - name: Dump resolved build settings
+        working-directory: ./mobile/ios
+        run: |
+          xcodebuild -project Runner.xcodeproj -scheme Runner \
+            -configuration Release -sdk iphoneos \
+            -showBuildSettings 2>/dev/null \
+            | grep -E 'MARKETING_VERSION|CURRENT_PROJECT_VERSION|FLUTTER_BUILD_NAME|FLUTTER_BUILD_NUMBER|PRODUCT_BUNDLE_IDENTIFIER|INFOPLIST_FILE' \
+            | sort -u
+
+      # The Runner target reads MARKETING_VERSION/CURRENT_PROJECT_VERSION from
+      # FLUTTER_BUILD_NAME/FLUTTER_BUILD_NUMBER (written into Generated.xcconfig
+      # from mobile/pubspec.yaml, which the branding step stamps with `version`).
+      # Passing them explicitly as well keeps the build correct even if that
+      # chain ever changes upstream.
+      - name: Build unsigned archive
+        working-directory: ./mobile
+        run: |
+          args=(--no-codesign "--${{ inputs.build_mode }}")
+          v="${{ inputs.version }}"
+          if [ -n "$v" ]; then
+            args+=(--build-name "${v#v}")
+            args+=(--build-number "$(grep -E '^version:' pubspec.yaml | sed -E 's/.*\+//')")
+          fi
+          echo "--- pre-build version chain ---"
+          grep -E '^version:' pubspec.yaml
+          grep -rE 'MARKETING_VERSION|CURRENT_PROJECT_VERSION' ios/Runner.xcodeproj/project.pbxproj | grep -v '1\.0;\|Widget\|ShareExtension' | head -8
+          flutter build ipa "${args[@]}"
+          echo "--- post-build Generated.xcconfig ---"
+          grep -E 'FLUTTER_BUILD_NAME|FLUTTER_BUILD_NUMBER' ios/Flutter/Generated.xcconfig || true
+
+      # `--no-codesign` stops after the .xcarchive: Flutter skips IPA creation
+      # because its export step wants a provisioning profile. An IPA is just a
+      # zip with Payload/<App>.app at the root, so build it by hand. TrollStore
+      # re-signs the binary on install, so no signature is needed here.
+      - name: Package IPA from the archive
+        run: |
+          set -eux
+          archive="$(find mobile/build/ios/archive -maxdepth 1 -name '*.xcarchive' | head -1)"
+          [ -n "$archive" ] || { echo "::error::no .xcarchive found"; exit 1; }
+          echo "Archive: $archive"
+
+          app="$(find "$archive/Products/Applications" -maxdepth 1 -name '*.app' | head -1)"
+          [ -n "$app" ] || { echo "::error::no .app in archive"; exit 1; }
+          echo "App: $app"
+
+          rm -rf /tmp/ipa && mkdir -p /tmp/ipa/Payload
+          cp -R "$app" /tmp/ipa/Payload/
+
+          # Report identity + min OS so the log is self-documenting.
+          binary="$app/$(basename "$app" .app)"
+          plist="/tmp/ipa/Payload/$(basename "$app")/Info.plist"
+          echo "--- Info.plist ---"
+          plutil -p "$plist" | grep -iE 'CFBundleIdentifier|MinimumOSVersion|CFBundleShortVersionString|CFBundleDisplayName|CFBundleName' || true
+          echo "--- Mach-O header ---"
+          otool -hv "$binary" | tail -2 || true
+
+          (cd /tmp/ipa && zip -qry /tmp/gallery-unsigned.ipa Payload)
+          cp /tmp/gallery-unsigned.ipa unsigned-gallery.ipa
+          ls -lh unsigned-gallery.ipa
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-ios-ipa
+          path: unsigned-gallery.ipa
+          if-no-files-found: error
+          retention-days: 30
