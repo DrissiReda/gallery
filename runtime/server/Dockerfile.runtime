@@ -1,4 +1,4 @@
-FROM ghcr.io/open-noodle/gallery-server@sha256:1ba41c6bc57effbbf157114c2faa1eda9e79a48774bcc3f66eed25967f7b262a
+FROM ghcr.io/open-noodle/gallery-server@sha256:08b9818252bdef75eb599d7db6a97080cbd399056c6ee2787403e8310f234734
 USER root
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
